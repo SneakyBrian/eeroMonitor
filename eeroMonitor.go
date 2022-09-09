@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -137,32 +138,32 @@ func main() {
 
 	if *verificationKey != "" && *sessionKey != "" {
 		verifyKey(verificationKey, sessionKey)
-		fmt.Printf("Next monitor netowork with networkID (/2.2/networks/[ID]):\n")
-		fmt.Printf("\t./eeroMonitor -sessionKey=\"%s\" --networkID=\n", *sessionKey)
+		log.Printf("Next monitor network with networkID (/2.2/networks/[ID]):\n")
+		log.Printf("\t./eeroMonitor -sessionKey=\"%s\" --networkID=\n", *sessionKey)
 
 	} else if *loginID != "" {
 		sessionKey := login(loginID)
-		//fmt.Printf("sessionKey=%s\n", sessionKey)
-		fmt.Printf("Next verify session with verification code: \n")
-		fmt.Printf("\t./eeroMonitor -sessionKey=\"%s\" -verificationKey=\n", sessionKey)
+		//log.Printf("sessionKey=%s\n", sessionKey)
+		log.Printf("Next verify session with verification code: \n")
+		log.Printf("\t./eeroMonitor -sessionKey=\"%s\" -verificationKey=\n", sessionKey)
 
 	} else if *sessionKey != "" && *networkID != "" {
 		if *command == "" || *command == "monitor" {
 			monitor(sessionKey, networkID)
 		} else {
-			fmt.Printf("Unknown command: %s\n", *command)
+			log.Printf("Unknown command: %s\n", *command)
 
 		}
 
 	} else {
-		fmt.Printf("Unknow set of arguments...\n")
-		fmt.Printf("\t./eeroMonitor -loginID=[YOUR_LOGIN_ID]\n")
+		log.Printf("Unknown set of arguments...\n")
+		log.Printf("\t./eeroMonitor -loginID=[YOUR_LOGIN_ID]\n")
 		return
 	}
 }
 
 func login(loginID *string) string {
-	fmt.Printf("Login: %s\n", *loginID)
+	log.Printf("Login: %s\n", *loginID)
 	url := "https://api-user.e2ro.com/2.2/login?"
 
 	loginRequest := LoginRequest{Login: *loginID}
@@ -178,7 +179,7 @@ func login(loginID *string) string {
 }
 
 func verifyKey(verificationKey *string, sessionKey *string) string {
-	fmt.Printf("Verify: %s, %s\n", *verificationKey, *sessionKey)
+	log.Printf("Verify: %s, %s\n", *verificationKey, *sessionKey)
 
 	verifyRequest := LoginVerifyRequest{Code: *verificationKey}
 	var verifyResponse LoginVerifyResponse
@@ -193,15 +194,15 @@ func verifyKey(verificationKey *string, sessionKey *string) string {
 
 	networks := verifyResponse.Data.Networks.Data
 	for _, network := range networks {
-		fmt.Printf("%s - %s\n", network.Name, network.URL)
+		log.Printf("%s - %s\n", network.Name, network.URL)
 	}
 	return ""
 }
 
 func monitor(sessionKey *string, networkID *string) {
-	fmt.Printf("Monitoring Network: %s\n", *networkID)
+	log.Printf("Monitoring Network: %s\n", *networkID)
 	url := fmt.Sprintf("https://api-user.e2ro.com%s/devices?thread=true", *networkID)
-	fmt.Printf("URL: %s\n", url)
+	log.Printf("URL: %s\n", url)
 
 	// TODO: Query /2.2/networks/[NETWORK_ID]/burst_reporters?
 	// to schedule next time to query usage
@@ -214,20 +215,37 @@ func monitor(sessionKey *string, networkID *string) {
 			panic(err)
 		}
 
+		// json.NewEncoder(log.Default().Writer()).Encode(networkDeviceResponse)
+
 		networks := networkDeviceResponse.Data
-		foundResult := false
+		var totalup float64 = 0
+		var totaldown float64 = 0
+		// foundResult := false
 		for _, device := range networks {
 			up := device.Usage.UpMbps
 			down := device.Usage.DownMbps
 			if up > 0 || down > 0 {
-				foundResult = true
-				fmt.Printf("%s - %s (%f Mbps, %f Mbps)\n", device.Hostname, device.DeviceType, device.Usage.DownMbps, device.Usage.UpMbps)
+				// foundResult = true
+				name := device.Nickname
+				if name == nil {
+					name = device.Hostname
+				}
+				if name == nil || name == "" {
+					name = "<NO NAME>"
+				}
+
+				log.Printf("%s (%s) - %s (%.2f Mbps, %.2f Mbps)\n", name, device.Mac, device.DeviceType, device.Usage.DownMbps, device.Usage.UpMbps)
+
+				totalup += up
+				totaldown += down
 			}
 		}
 
-		if foundResult {
-			fmt.Printf("\n\n\n\n")
-		}
+		log.Printf("*** Total (%.2f Mbps, %.2f Mbps)\n", totaldown, totalup)
+
+		// if foundResult {
+		// 	log.Printf("\n\n\n\n")
+		// }
 		time.Sleep(60 * time.Second)
 	}
 }
@@ -235,25 +253,33 @@ func monitor(sessionKey *string, networkID *string) {
 func doRequest(url string, token *string, reqObj interface{}, respObj interface{}) error {
 	method := "GET"
 
+	var req *http.Request
+	var err error
+
 	b := new(bytes.Buffer)
 	if reqObj != nil {
 		method = "POST"
 		json.NewEncoder(b).Encode(reqObj)
+		req, err = http.NewRequest(method, url, b)
+		if err != nil {
+			return err
+		}
 	} else {
-		b = nil
+		req, err = http.NewRequest(method, url, nil)
+		if err != nil {
+			return err
+		}
 	}
 
+	// log.Printf("method: %s, url: %s, body: %v\n", method, url, b)
+
 	client := &http.Client{}
-	req, err := http.NewRequest(method, url, b)
-	if err != nil {
-		return err
-	}
 
 	req.Header.Add("Accept", "application/json")
 
 	if token != nil {
 		sessionString := fmt.Sprintf("s=%s", *token)
-		//fmt.Printf("Session Key: %s\n", sessionString)
+		//log.Printf("Session Key: %s\n", sessionString)
 		req.Header.Add("Cookie", sessionString)
 	}
 
